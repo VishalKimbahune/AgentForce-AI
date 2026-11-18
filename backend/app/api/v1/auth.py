@@ -16,6 +16,7 @@ from app.schemas.auth import (
     CompleteProfileResponse,
     DemoLoginRequest,
     DemoLoginResponse,
+    RegisterRequest,
     MeResponse,
     MembershipBase,
     OrganizationBase,
@@ -184,4 +185,77 @@ async def demo_login(
         active_tenant_id=active_tenant,
         role=role,
     )
+
+
+@router.post("/auth/register", response_model=DemoLoginResponse)
+async def register_account(
+    body: RegisterRequest,
+    db: AsyncSession = Depends(get_db),
+) -> DemoLoginResponse:
+    """Creates a new user and organization workspace directly in the database."""
+    norm_email = body.email.strip().lower()
+
+    # Check if user already exists
+    result = await db.execute(
+        select(User)
+        .options(selectinload(User.memberships).selectinload(Membership.organization))
+        .where(User.email == norm_email)
+    )
+    user = result.scalar_one_or_none()
+
+    if user:
+        # Existing user: retrieve active tenant & role
+        active_tenant = user.memberships[0].tenant_id if user.memberships else None
+        role = user.memberships[0].role if user.memberships else "owner"
+    else:
+        # Create new user
+        user_id = f"auth-user-{uuid.uuid4()}"
+        user = User(
+            id=user_id,
+            email=norm_email,
+            name=body.name.strip() if body.name else norm_email.split("@")[0],
+        )
+        db.add(user)
+        await db.flush()
+
+        # Create new organization
+        org_name = body.organization_name.strip() if body.organization_name else f"{user.name}'s Workspace"
+        org = Organization(
+            name=org_name,
+            plan="enterprise",
+            daily_token_budget=500000,
+        )
+        db.add(org)
+        await db.flush()
+
+        # Create owner membership
+        membership = Membership(
+            tenant_id=org.id,
+            user_id=user.id,
+            role="owner",
+        )
+        db.add(membership)
+        await db.commit()
+
+        active_tenant = org.id
+        role = "owner"
+
+    # Issue signed JWT
+    token = create_token(
+        sub=user.id,
+        email=user.email,
+        extra_claims={
+            "app_metadata": {"role": role},
+            "user_metadata": {"name": user.name},
+        },
+    )
+
+    return DemoLoginResponse(
+        access_token=token,
+        token_type="bearer",
+        user=UserBase.model_validate(user),
+        active_tenant_id=active_tenant,
+        role=role,
+    )
+
 

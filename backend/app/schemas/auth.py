@@ -71,6 +71,13 @@ class DemoLoginResponse(BaseModel):
     role: str
 
 
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    name: str = Field(..., description="Full name of user")
+    organization_name: str = Field(..., description="Organization or workspace name")
+    password: Optional[str] = None
+
+
 class UpdateOrganizationRequest(BaseModel):
     name: Optional[str] = None
     daily_token_budget: Optional[int] = None

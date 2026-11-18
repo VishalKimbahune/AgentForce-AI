@@ -235,33 +235,69 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       orgName: string
     ): Promise<AuthResult> => {
       const supabase = getSupabaseClient();
-      if (!supabase) {
-        return {
-          error: {
-            message:
-              "Supabase cloud auth is not configured. Use the 1-Click Demo Login buttons below for local access.",
-          },
-        };
+      if (supabase) {
+        const { data, error } = await supabase.auth.signUp({ email, password });
+        if (error) {
+          return { error: { message: error.message } };
+        }
+        const token = data.session?.access_token;
+        if (token) {
+          await fetch(`${API_BASE}/api/v1/auth/complete-profile`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ name: fullName, organization_name: orgName }),
+          });
+          await hydrateFromToken(token);
+        }
+        return { error: null };
       }
-      const { data, error } = await supabase.auth.signUp({ email, password });
-      if (error) {
-        return { error: { message: error.message } };
-      }
-      const token = data.session?.access_token;
-      if (token) {
-        await fetch(`${API_BASE}/api/v1/auth/complete-profile`, {
+
+      // Local database registration when Supabase cloud is not configured
+      try {
+        const res = await fetch(`${API_BASE}/api/v1/auth/register`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ name: fullName, organization_name: orgName }),
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email,
+            password,
+            name: fullName,
+            organization_name: orgName,
+          }),
         });
-        await hydrateFromToken(token);
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          return {
+            error: {
+              message: errData.error?.message || errData.detail || "Registration failed",
+            },
+          };
+        }
+        const data = await res.json();
+        const token: string = data.access_token;
+        if (typeof window !== "undefined") {
+          localStorage.setItem(DEMO_TOKEN_KEY, token);
+        }
+        const ok = await hydrateFromToken(token);
+        if (!ok) {
+          setUser({ id: data.user.id, email: data.user.email });
+          setAppUser(data.user);
+          setSession({
+            access_token: token,
+            token_type: data.token_type || "bearer",
+            user: { id: data.user.id, email: data.user.email },
+          });
+          setActiveTenantId(data.active_tenant_id || null);
+        }
+        return { error: null };
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : "Network error during registration";
+        return { error: { message } };
       }
-      return { error: null };
     },
-    [hydrateFromToken]
+    [hydrateFromToken, setActiveTenantId]
   );
 
   const signOut = useCallback(async () => {
