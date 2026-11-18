@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agentforce
+  labels:
+    app.kubernetes.io/name: agentforce
+    app.kubernetes.io/part-of: agentforce-platform
+
